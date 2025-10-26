@@ -339,9 +339,11 @@ class VibeVoiceForConditionalGenerationInference(VibeVoicePreTrainedModel, Gener
         speech_tensors: Optional[torch.FloatTensor] = None,
         speech_masks: Optional[torch.BoolTensor] = None,
         speech_input_mask: Optional[torch.BoolTensor] = None,
+        is_prefill: bool = True,
         return_speech: bool = True,
         cfg_scale: float = 1.0,
         stop_check_fn: Optional[Callable[[], bool]] = None,
+        tqdm_class: Optional[type] = None,
         **kwargs,
     ) -> Union[torch.LongTensor, VibeVoiceGenerationOutput]:
         """
@@ -390,7 +392,6 @@ class VibeVoiceForConditionalGenerationInference(VibeVoicePreTrainedModel, Gener
         device = input_ids.device
         finished_tags = torch.zeros(batch_size, dtype=torch.bool, device=device)
         correct_cnt = torch.zeros(batch_size, dtype=torch.long, device=device)
-        is_prefill = True
         inputs_embeds = None
         verbose = kwargs.get("verbose", False)
 
@@ -423,7 +424,8 @@ class VibeVoiceForConditionalGenerationInference(VibeVoicePreTrainedModel, Gener
 
         # Create progress iterator if verbose
         if kwargs.get("show_progress_bar", True):
-            progress_bar = tqdm(range(max_steps), desc="Generating", leave=False)
+            tqdm_fn = tqdm_class if tqdm_class is not None else tqdm
+            progress_bar = tqdm_fn(range(max_steps), desc="Generating", leave=False)
         else:
             progress_bar = range(max_steps)
         

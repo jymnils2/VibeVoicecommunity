@@ -7,6 +7,7 @@ import time
 import torch
 
 from vibevoice.modular.modeling_vibevoice_inference import VibeVoiceForConditionalGenerationInference
+from vibevoice.modular.lora_loading import load_lora_assets
 from vibevoice.processor.vibevoice_processor import VibeVoiceProcessor
 from transformers.utils import logging
 
@@ -171,12 +172,28 @@ def parse_args():
         help="Device for inference: cuda | mps | cpu",
     )
     parser.add_argument(
+        "--checkpoint_path",
+        type=str,
+        default=None,
+        help="Path to a fine-tuned checkpoint directory containing LoRA adapters (optional)",
+    )
+    parser.add_argument(
+        "--disable_prefill",
+        action="store_true",
+        help="Disable speech prefill (voice cloning) by setting is_prefill=False during generation",
+    )
+    parser.add_argument(
         "--cfg_scale",
         type=float,
         default=1.3,
         help="CFG (Classifier-Free Guidance) scale for generation (default: 1.3)",
     )
-    
+    parser.add_argument(
+    "--seed",
+    type=int,
+    default=None,
+    help="Random seed for reproducibility (optional)",
+)
     return parser.parse_args()
 
 def main():
@@ -193,6 +210,12 @@ def main():
         args.device = "cpu"
 
     print(f"Using device: {args.device}")
+
+    if args.seed is not None:
+        print(f"Setting seed: {args.seed}")
+        torch.manual_seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
 
     # Initialize voice mapper
     voice_mapper = VoiceMapper()
@@ -309,6 +332,35 @@ def main():
             raise e
 
 
+    if args.checkpoint_path:
+        print(f"Loading fine-tuned assets from {args.checkpoint_path}")
+        try:
+            report = load_lora_assets(model, args.checkpoint_path)
+            loaded_components = [
+                name for name, loaded in (
+                    ("language LoRA", report.language_model),
+                    ("diffusion head LoRA", report.diffusion_head_lora),
+                    ("diffusion head weights", report.diffusion_head_full),
+                    ("acoustic connector", report.acoustic_connector),
+                    ("semantic connector", report.semantic_connector),
+                )
+                if loaded
+            ]
+            if loaded_components:
+                print(f"Loaded components: {', '.join(loaded_components)}")
+            else:
+                print("Warning: no adapter components were loaded; check the checkpoint path.")
+            if report.adapter_root is not None:
+                print(f"Adapter assets resolved to: {report.adapter_root}")
+        except Exception as exc:
+            print(f"Failed to load LoRA assets: {exc}")
+            raise
+
+    if args.disable_prefill:
+        print("Voice cloning disabled: running generation with is_prefill=False")
+    else:
+        print("Voice cloning enabled: running generation with is_prefill=True")
+
     model.eval()
     model.set_ddpm_inference_steps(num_steps=10)
 
@@ -341,6 +393,7 @@ def main():
         tokenizer=processor.tokenizer,
         generation_config={'do_sample': False},
         verbose=True,
+        is_prefill=not args.disable_prefill,
     )
     generation_time = time.time() - start_time
     print(f"Generation time: {generation_time:.2f} seconds")
@@ -393,7 +446,9 @@ def main():
     print(f"Generation time: {generation_time:.2f} seconds")
     print(f"Audio duration: {audio_duration:.2f} seconds")
     print(f"RTF (Real Time Factor): {rtf:.2f}x")
-    
+    if args.seed is not None:
+        print(f"Seed used: {args.seed}")
+
     print("="*50)
 
 if __name__ == "__main__":
